@@ -25,8 +25,7 @@ import {
 } from '../../domain/entities/wager-transaction.js';
 
 import {
-  WalletLedgerEntry,
-  LedgerDirection,
+  WalletLedgerEntry
 } from '../../domain/entities/wallet-ledger-entry.js';
 
 import { OutboxMessage } from

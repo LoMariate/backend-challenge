@@ -37,8 +37,8 @@ export class ProcessWagerTransactionDto {
   gameId!: string;
 
   // Apenas BET nesta etapa
-  @IsIn(['BET'])
-  kind!: 'BET';
+  @IsIn(['BET', 'WIN', 'LOSS'])
+  kind!: 'BET' | 'WIN' | 'LOSS';
 
   @ValidateNested()
   @Type(() => MoneyDto)
