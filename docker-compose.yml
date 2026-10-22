@@ -1,4 +1,19 @@
 services:
+  
+  localstack:
+    image: localstack/localstack:latest
+    container_name: backend-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs
+      AWS_DEFAULT_REGION: us-east-1
+      SQS_ENDPOINT_STRATEGY: path
+      PERSISTENCE: "1"
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
+    volumes:
+      - localstack_data:/var/lib/localstack
+
   postgres:
     image: postgres:16
     container_name: backend-postgres
@@ -20,6 +35,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  
 
 volumes:
-  postgres_data:
+  postgres_data:  
+  localstack_data:
