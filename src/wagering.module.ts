@@ -6,9 +6,12 @@ import { WageringController } from
 import { ProcessWagerTransactionUseCase } from
   './application/use-cases/process-wager-transaction.use-case.js';
 
+import { PendingReferenceWorker } from
+  './infrastructure/messaging/pending-reference.worker.js';
+  
 @Module({
   controllers: [WageringController],
-  providers: [ProcessWagerTransactionUseCase],
+  providers: [ProcessWagerTransactionUseCase, PendingReferenceWorker],
   exports: [ProcessWagerTransactionUseCase],
 })
 export class WageringModule {}

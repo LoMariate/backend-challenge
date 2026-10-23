@@ -5,6 +5,7 @@ import {
   IsUUID,
   MaxLength,
   ValidateNested,
+  IsOptional,
 } from 'class-validator';
 
 import { Type } from 'class-transformer';
@@ -36,9 +37,14 @@ export class ProcessWagerTransactionDto {
   @IsNotEmpty()
   gameId!: string;
 
-  // Apenas BET nesta etapa
-  @IsIn(['BET', 'WIN', 'LOSS'])
-  kind!: 'BET' | 'WIN' | 'LOSS';
+  @IsIn(['BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK'])
+  kind!: 'BET' | 'WIN' | 'LOSS' | 'REFUND' | 'ROLLBACK';
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  referenceExternalTransactionId?: string;
 
   @ValidateNested()
   @Type(() => MoneyDto)

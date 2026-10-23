@@ -97,6 +97,7 @@ export class WalletCreationRepository {
           observedBalance: wallet.balance.toJSON().amount,
           createdAt: opening.createdAt,
           processedAt: opening.processedAt,
+          pendingReferenceAttempts: 0,
         },
       );
 

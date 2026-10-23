@@ -51,13 +51,16 @@ export class WageringController {
       roundId: body.roundId,
       gameId: body.gameId,
       kind: body.kind,
-      money: body.money,
+      money: body.money,     
+      referenceExternalTransactionId: body.referenceExternalTransactionId,
     });
 
-    if (result.status === 'REJECTED') {
+    if (result.status === 'PENDING_REFERENCE') {
+      response.status(HttpStatus.ACCEPTED);
+    } else if (result.status === 'REJECTED') {
       response.status(HttpStatus.UNPROCESSABLE_ENTITY);
     }
-
+    
     return result;
   }
 }

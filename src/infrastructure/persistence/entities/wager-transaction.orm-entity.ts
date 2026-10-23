@@ -152,4 +152,17 @@ export class WagerTransactionOrmEntity {
     nullable: true,
   })
   processedAt?: Date;
+  
+  @Property({
+    type: 'int',
+    default: 0,
+  })
+  pendingReferenceAttempts!: number;
+
+  @Property({
+    type: 'datetime',
+    columnType: 'timestamptz',
+    nullable: true,
+  })
+  nextReferenceAttemptAt?: Date;
 }
