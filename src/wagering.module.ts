@@ -8,9 +8,12 @@ import { ProcessWagerTransactionUseCase } from
 
 import { PendingReferenceWorker } from
   './infrastructure/messaging/pending-reference.worker.js';
+
+import { WagerQueriesController } from
+  './presentation/http/wager-queries.controller.js';
   
 @Module({
-  controllers: [WageringController],
+  controllers: [WageringController, WagerQueriesController],
   providers: [ProcessWagerTransactionUseCase, PendingReferenceWorker],
   exports: [ProcessWagerTransactionUseCase],
 })

@@ -9,8 +9,14 @@ import { WalletCreationRepository } from
 import { WalletsController } from
   './presentation/http/wallets.controller.js';
 
+import { WalletQueriesController } from
+  './presentation/http/wallet-queries.controller.js';
+
+import { WalletLedgerController } from
+  './presentation/http/wallet-ledger.controller.js';  
+
 @Module({
-  controllers: [WalletsController],
+  controllers: [WalletsController, WalletQueriesController, WalletLedgerController],
   providers: [
     CreateWalletUseCase,
     WalletCreationRepository,
