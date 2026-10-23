@@ -20,6 +20,7 @@ lerna-debug.log*
 .DS_Store
 
 # Tests
+dist/
 /coverage
 /.nyc_output
 
@@ -45,6 +46,7 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 .env.local
+!.env.example
 
 # temp directory
 .temp
