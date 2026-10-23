@@ -24,12 +24,16 @@ import { ReconciliationController } from
 import { MetricsController } from
   './presentation/http/metrics.controller.js';
 
+import { ObservabilitySampler } from
+  './infrastructure/observability/observability-sampler.service.js';
+
 @Module({
   controllers: [WalletsController, WalletQueriesController, WalletLedgerController, ReconciliationController, MetricsController],
   providers: [
     CreateWalletUseCase,
     WalletCreationRepository,
     ReconcileWalletUseCase,
+    ObservabilitySampler,
   ],
 })
 export class WalletsModule {}

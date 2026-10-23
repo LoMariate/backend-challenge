@@ -9,6 +9,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 
+
+import {
+  wagerOperationsTotal,
+  wagerDuplicatesTotal,
+  wagerProcessingDuration,
+} from '../../infrastructure/observability/observability.metrics.js';
+
+
 import type { Response } from 'express';
 
 import { ProcessWagerTransactionUseCase } from
@@ -41,19 +49,46 @@ export class WageringController {
       );
     }
 
-    const result = await this.processWager.execute({
-      providerId: body.providerId,
-      externalTransactionId:
-        body.externalTransactionId,
-      idempotencyKey,
-      playerId: body.playerId,
-      walletId: body.walletId,
-      roundId: body.roundId,
-      gameId: body.gameId,
+
+    const stopTimer = wagerProcessingDuration.startTimer({
       kind: body.kind,
-      money: body.money,     
-      referenceExternalTransactionId: body.referenceExternalTransactionId,
+      source: 'http',
     });
+
+    let result: Awaited<
+      ReturnType<ProcessWagerTransactionUseCase['execute']>
+    >;
+
+    try {
+      result = await this.processWager.execute({
+        providerId: body.providerId,
+        externalTransactionId: body.externalTransactionId,
+        idempotencyKey,
+        playerId: body.playerId,
+        walletId: body.walletId,
+        roundId: body.roundId,
+        gameId: body.gameId,
+        kind: body.kind,
+        money: body.money,
+        referenceExternalTransactionId:
+          body.referenceExternalTransactionId,
+      });
+    } finally {
+      stopTimer();
+    }
+
+    if (result.idempotentReplay) {
+      wagerDuplicatesTotal.inc({
+        source: 'http',
+      });
+    } else {
+      wagerOperationsTotal.inc({
+        kind: body.kind,
+        status: result.status,
+        source: 'http',
+      });
+    }
+
 
     if (result.status === 'PENDING_REFERENCE') {
       response.status(HttpStatus.ACCEPTED);

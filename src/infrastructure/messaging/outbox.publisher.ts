@@ -5,6 +5,10 @@ import { randomUUID } from 'node:crypto';
 import { EntityManager } from '@mikro-orm/postgresql';
 
 import {
+  wagerRetriesTotal,
+} from '../observability/observability.metrics.js';
+
+import {
   SQSClient,
   SendMessageCommand,
 } from '@aws-sdk/client-sqs';
@@ -178,7 +182,10 @@ export class OutboxPublisher implements OnModuleDestroy {
         );
 
         try {
-          await this.scheduleRetry(event);
+          await this.scheduleRetry(event);          
+          wagerRetriesTotal.inc({
+            component: 'outbox',
+          });
         } catch {
           // Se o PostgreSQL estiver indisponível,
           // o lease expira e outra instância poderá tentar.

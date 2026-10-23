@@ -27,6 +27,10 @@ import {
   type ExternalWagerKind,
 } from '../../application/ports/wager-message-handler.js';
 
+import {
+  wagerRetriesTotal,
+} from '../observability/observability.metrics.js';
+
 function isObject(
   value: unknown,
 ): value is Record<string, unknown> {
@@ -385,6 +389,9 @@ export class WagerTransactionsConsumer
           VisibilityTimeout: delaySeconds,
         }),
       );
+      wagerRetriesTotal.inc({
+      component: 'sqs_consumer',
+    });
     } catch (visibilityError) {
       // Sem ACK. A mensagem voltará quando expirar
       // a visibilidade original, se a fila estiver

@@ -10,6 +10,10 @@ import { randomUUID } from 'node:crypto';
 import { EntityManager } from '@mikro-orm/postgresql';
 
 import {
+  wagerLockConflictsTotal,
+} from '../../infrastructure/observability/observability.metrics.js';
+
+import {
   Money,
   type MoneyProps,
 } from '../../domain/value-objects/money.js';
@@ -575,11 +579,17 @@ export class ProcessWagerTransactionUseCase {
           ],
         );
 
+
         if (updated.length !== 1) {
+          wagerLockConflictsTotal.inc({
+            reason: 'version_mismatch',
+          });
+
           throw new ServiceUnavailableException(
             'WALLET_CONCURRENT_UPDATE',
           );
         }
+
 
         // 9. Criar o lançamento financeiro.
         ledger = WalletLedgerEntry.create({
@@ -905,11 +915,17 @@ private async processReversal(
     ],
   );
 
-  if (updated.length !== 1) {
-    throw new ServiceUnavailableException(
-      'WALLET_CONCURRENT_UPDATE',
-    );
-  }
+
+    if (updated.length !== 1) {
+      wagerLockConflictsTotal.inc({
+        reason: 'version_mismatch',
+      });
+
+      throw new ServiceUnavailableException(
+        'WALLET_CONCURRENT_UPDATE',
+      );
+    }
+
 
   // 13. Gerar lançamento imutável no ledger.
   const ledger = WalletLedgerEntry.create({

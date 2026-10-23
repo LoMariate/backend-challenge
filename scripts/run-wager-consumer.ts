@@ -1,6 +1,7 @@
-
 import 'reflect-metadata';
 import 'dotenv/config';
+
+import { ConsoleLogger } from '@nestjs/common';
 
 import { NestFactory } from '@nestjs/core';
 
@@ -18,7 +19,13 @@ const sleep = (ms: number): Promise<void> =>
 async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     AppModule,
+    {
+      logger: new ConsoleLogger({
+        json: true,
+      }),
+    },
   );
+
 
   const consumer = app.get(WagerTransactionsConsumer);
 

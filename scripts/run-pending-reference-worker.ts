@@ -5,13 +5,22 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../src/app.module.js';
 
+import { ConsoleLogger } from '@nestjs/common';
+
 import { PendingReferenceWorker } from
   '../src/infrastructure/messaging/pending-reference.worker.js';
 
 async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     AppModule,
+    {
+      logger: new ConsoleLogger({
+        json: true,
+      }),
+    },
   );
+
+
 
   const worker = app.get(PendingReferenceWorker);
 

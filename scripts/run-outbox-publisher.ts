@@ -4,6 +4,8 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 
+import { ConsoleLogger } from '@nestjs/common';
+
 import { AppModule } from '../src/app.module.js';
 
 import { OutboxPublisher } from
@@ -17,7 +19,13 @@ const sleep = (ms: number): Promise<void> =>
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.createApplicationContext(
     AppModule,
+    {
+      logger: new ConsoleLogger({
+        json: true,
+      }),
+    },
   );
+
 
   const publisher = app.get(OutboxPublisher);
 
