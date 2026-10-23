@@ -1088,12 +1088,104 @@ private async processReversal(
     inbox: InboxContext | undefined,
     retry: ReferenceRetryState,
   ): Promise<ProcessWagerOutput> {
-    const expired =
-      retry.attempts >= 8 ||
-      Date.now() - retry.createdAt.getTime() >=
-        24 * 60 * 60 * 1000;
+    const MAX_PENDING_REFERENCE_ATTEMPTS = 8;
 
-    if (retry.isRetry && expired) {
+    let nextAttempts = 0;
+    let expiredByAge = false;
+
+    // ==================================================
+    // 1. RECUPERAR O ESTADO REAL DO POSTGRESQL
+    // ==================================================
+
+    if (retry.isRetry) {
+      const rows = await tx.execute<
+        {
+          pending_reference_attempts: number | string;
+          expired_by_age: boolean;
+        }[]
+      >(
+        `
+        SELECT
+          pending_reference_attempts,
+
+          (
+            created_at <= NOW() - INTERVAL '24 hours'
+          ) AS expired_by_age
+
+        FROM wager_transactions
+
+        WHERE id = ?
+          AND status = 'PENDING_REFERENCE'
+
+        FOR UPDATE
+        `,
+        [wager.id],
+      );
+
+      const persisted = rows[0];
+
+      if (!persisted) {
+        throw new Error(
+          'PENDING_REFERENCE_RETRY_STATE_NOT_FOUND',
+        );
+      }
+
+      const currentAttempts = Number(
+        persisted.pending_reference_attempts,
+      );
+
+      if (
+        !Number.isSafeInteger(currentAttempts) ||
+        currentAttempts < 0
+      ) {
+        throw new Error(
+          'INVALID_PENDING_REFERENCE_ATTEMPTS',
+        );
+      }
+
+      nextAttempts = currentAttempts + 1;
+
+      expiredByAge = persisted.expired_by_age;
+    }
+
+    // ==================================================
+    // 2. VERIFICAR O LIMITE DE TENTATIVAS
+    // ==================================================
+
+    const expired =
+      retry.isRetry &&
+      (
+        nextAttempts >=
+          MAX_PENDING_REFERENCE_ATTEMPTS ||
+        expiredByAge
+      );
+
+    if (expired) {
+      // Registrar a tentativa final antes da rejeicao.
+      // Esta escrita e a rejeicao abaixo participam
+      // da mesma transacao SQL.
+      await tx.execute(
+        `
+        UPDATE wager_transactions
+
+        SET pending_reference_attempts = ?
+
+        WHERE id = ?
+          AND status = 'PENDING_REFERENCE'
+        `,
+        [
+          nextAttempts,
+          wager.id,
+        ],
+      );
+
+      // Reutilizar o fluxo existente de rejeicao.
+      // Ele grava:
+      // - status REJECTED
+      // - failure_code
+      // - observed_balance
+      // - proximo retry NULL
+      // - evento WagerTransactionRejected na Outbox
       return this.rejectReversal(
         tx,
         wager,
@@ -1102,6 +1194,10 @@ private async processReversal(
         inbox,
       );
     }
+
+    // ==================================================
+    // 3. MANTER A TRANSACAO PENDENTE
+    // ==================================================
 
     if (
       wager.status !==
@@ -1115,21 +1211,31 @@ private async processReversal(
     await tx.execute(
       `
       UPDATE wager_transactions
-      SET status = 'PENDING_REFERENCE',
-          observed_balance = ?,
-          pending_reference_attempts =
-            pending_reference_attempts + ?,
-          next_reference_attempt_at =
-            NOW() + make_interval(
-              secs => LEAST(
-                300,
-                1 << LEAST(
-                  pending_reference_attempts + ?, 8
-                )
+
+      SET
+        status = 'PENDING_REFERENCE',
+
+        observed_balance = ?,
+
+        pending_reference_attempts =
+          pending_reference_attempts + ?,
+
+        next_reference_attempt_at =
+          NOW() + make_interval(
+            secs => LEAST(
+              300,
+              1 << LEAST(
+                pending_reference_attempts + ?,
+                8
               )
             )
+          )
+
       WHERE id = ?
-        AND status IN ('PENDING', 'PENDING_REFERENCE')
+        AND status IN (
+          'PENDING',
+          'PENDING_REFERENCE'
+        )
       `,
       [
         wallet.balance.toJSON().amount,
@@ -1139,8 +1245,13 @@ private async processReversal(
       ],
     );
 
-    // Apenas a primeira entrada em PENDING_REFERENCE
-    // produz o evento. Reavaliações não duplicam eventos.
+    // ==================================================
+    // 4. EVENTO DE PENDENCIA
+    // ==================================================
+
+    // O evento PENDING_REFERENCE e emitido
+    // somente quando a transacao entra
+    // nesse estado pela primeira vez.
     if (!retry.isRetry) {
       const event =
         WagerTransactionPendingReference.from(
@@ -1160,9 +1271,14 @@ private async processReversal(
       );
     }
 
-    // A Inbox pode ser confirmada: a solicitação já
-    // foi persistida e o worker assumirá a pendência.
-    await this.markInboxProcessed(tx, inbox);
+    // ==================================================
+    // 5. CONFIRMAR A INBOX
+    // ==================================================
+
+    await this.markInboxProcessed(
+      tx,
+      inbox,
+    );
 
     return {
       transactionId: wager.id,

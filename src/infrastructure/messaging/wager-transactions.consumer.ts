@@ -319,7 +319,45 @@ export class WagerTransactionsConsumer
     }
 
     clearInterval(heartbeat);
+    // TESTE DE RECUPERACAO: falha controlada apos o commit.
+    // Este bloco nao e ativado em operacao normal.
 
+    if (
+      process.env.NODE_ENV === 'test' &&
+      process.env.WAGER_TEST_CRASH_AFTER_COMMIT_MESSAGE_ID ===
+        request.messageId
+    ) {
+      const databaseUrl = process.env.DATABASE_URL;
+      const sqsEndpoint = process.env.SQS_ENDPOINT;
+
+      const allowedDatabase =
+        databaseUrl !== undefined &&
+        new URL(databaseUrl).pathname ===
+          '/backend_challenge_workers_test';
+
+      const allowedLocalStack =
+        sqsEndpoint !== undefined &&
+        ['localhost', '127.0.0.1'].includes(
+          new URL(sqsEndpoint).hostname,
+        );
+
+      const allowedQueue =
+        this.queueUrl.includes('wager-consumer-it-');
+
+      if (
+        !allowedDatabase ||
+        !allowedLocalStack ||
+        !allowedQueue
+      ) {
+        throw new Error(
+          'CRASH_FAILPOINT_REQUIRES_ISOLATED_TEST_ENVIRONMENT',
+        );
+      }
+
+      // Encerramento abrupto, proposital.
+      // O ACK ainda nao aconteceu.
+      process.exit(92);
+    }
     // 4. ACK somente após o handler confirmar o commit.
     // Se DeleteMessage falhar, a mensagem poderá voltar.
     // A Inbox e a idempotência financeira protegerão
