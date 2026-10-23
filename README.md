@@ -1,126 +1,301 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Backend Challenge — Distributed Wagering Wallet
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Serviço financeiro distribuído para carteiras de jogadores e transações de apostas de múltiplos provedores. O projeto prioriza **consistência monetária**, **idempotência persistente**, **concorrência entre instâncias**, **processamento assíncrono com recuperação após falhas** e **rastreabilidade via ledger imutável**.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Stack
 
-## Description
+- Bun 1.x (runtime, gerenciador de pacotes e test runner) e TypeScript em modo estrito.
+- NestJS (API HTTP e injeção de dependências).
+- PostgreSQL 16 e MikroORM 7 com migrations versionadas.
+- AWS SQS FIFO no LocalStack; AWS SDK v3.
+- `decimal.js` para o domínio monetário; PostgreSQL `NUMERIC` para persistência.
+- Docker Compose para API, banco, LocalStack e workers independentes.
+- `prom-client` para métricas Prometheus e logs JSON do NestJS.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+> **Escopo:** ambiente de demonstração/avaliação, não configuração pronta para produção. Credenciais locais `backend`/`test` não devem ser utilizadas em produção. As APIs de negócio não estão protegidas por um provedor de identidade neste escopo; veja [ARCHITECTURE.md](./ARCHITECTURE.md#autenticação-e-fronteira-de-confiança).
 
-## Project setup
+## Componentes
 
-```bash
-$ bun install
+| Serviço | Papel |
+| --- | --- |
+| `backend-api` | API HTTP para carteiras, apostas, ledger, consultas e reconciliação |
+| `backend-consumer` | Recebe `WagerTransactionRequested` da fila SQS e executa o mesmo caso de uso da API |
+| `backend-outbox` | Publica eventos confirmados do PostgreSQL na fila de eventos |
+| `backend-pending-reference` | Reavalia REFUND/ROLLBACK em `PENDING_REFERENCE` |
+| `backend-migrate` | Aplica migrations antes de subir a API |
+| `backend-queues` | Garante a existência/configuração das filas SQS no LocalStack |
+| `postgres` / `localstack` | Persistência e mensageria |
+
+### Garantias principais
+
+- Montantes entram e saem da API como **strings decimais** (`"25.00"`), nunca `number` para dinheiro.
+- Uma carteira não pode ficar com saldo negativo; SQL e domínio impõem a regra.
+- O ledger é append-only: UPDATE, DELETE e TRUNCATE são bloqueados por triggers.
+- `wallets.balance` é saldo materializado; pode ser reconstruído e confrontado com o ledger.
+- A idempotência não depende de cache nem apenas da deduplicação de FIFO.
+- Alteração de carteira, transação, ledger, Inbox (no SQS) e Outbox são confirmados atomicamente no PostgreSQL.
+- O SQS oferece entrega **at-least-once**: redelivery e publicação duplicada são possibilidades previstas no desenho.
+
+## Pré-requisitos
+
+- Docker Desktop + Docker Compose.
+- Bun **1.x** instalado localmente para desenvolvimento e execução de testes (a imagem da entrega utiliza Bun 1.4.3).
+- PowerShell no Windows ou shell equivalente.
+- Portas `3000` (API), `5432` (PostgreSQL) e `4566` (LocalStack) livres, caso estejam expostas pelo Compose base.
+
+O projeto possui um Compose base com serviços `postgres` e `localstack`, complementado pelo arquivo `compose.delivery.yaml`.
+
+## Configuração
+
+Crie/atualize o `.env` na raiz. Valores de exemplo **somente para desenvolvimento local**:
+
+```dotenv
+DATABASE_URL=postgresql://backend:backend@127.0.0.1:5432/backend_challenge
+SQS_ENDPOINT=http://localhost:4566
+SQS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+SQS_EVENTS_QUEUE_URL=http://localhost:4566/queue/us-east-1/000000000000/wager-events.fifo
+SQS_WAGER_QUEUE_URL=http://localhost:4566/queue/us-east-1/000000000000/wager-transactions.fifo
+SQS_WAGER_DLQ_URL=http://localhost:4566/queue/us-east-1/000000000000/wager-transactions-dlq.fifo
+SQS_WAGER_VISIBILITY_SECONDS=120
+SQS_WAGER_WAIT_SECONDS=10
 ```
 
-## Compile and run the project
+> Dentro do Docker, **não** use `localhost` para conectar outros containers. `compose.delivery.yaml` sobrescreve as variáveis com os hosts de serviço `postgres:5432` e `localstack:4566`, e a estratégia de URL de fila por caminho (`SQS_ENDPOINT_STRATEGY=path`). Os valores finais devem corresponder às URLs devolvidas pelo LocalStack. Não versione o `.env`.
 
-```bash
-# development
-$ bun run start
+Se o Compose base utilizar nomes/credenciais distintos, alinhe `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` e o `DATABASE_URL` antes de executar.
 
-# watch mode
-$ bun run start:dev
+## Iniciar tudo com Docker Compose (recomendado)
 
-# production mode
-$ bun run start:prod
+No PowerShell, na raiz do projeto:
+
+```powershell
+$baseCompose = @('compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml') |
+  Where-Object { Test-Path $_ } | Select-Object -First 1
+
+if (-not $baseCompose) { throw 'Arquivo Compose base não encontrado.' }
+
+docker compose -f $baseCompose -f compose.delivery.yaml config --quiet
+docker compose -f $baseCompose -f compose.delivery.yaml up -d --build
+docker compose -f $baseCompose -f compose.delivery.yaml ps
 ```
 
-## Run tests
+A API fica em `http://127.0.0.1:3000` se a porta 3000 estiver publicada no host. Os serviços `backend-migrate` e `backend-queues` são tarefas de inicialização e devem terminar com saída `0`.
 
-```bash
-# unit tests
-$ bun run test
+Verificação de saúde:
 
-# e2e tests
-$ bun run test:e2e
-
-# test coverage
-$ bun run test:cov
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:3000/health/live'
+Invoke-RestMethod 'http://127.0.0.1:3000/health/ready' | ConvertTo-Json -Depth 5
 ```
 
-## Deployment
+Para logs e escalabilidade:
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ bun install -g @nestjs/mau
-$ mau deploy
+```powershell
+docker compose -f $baseCompose -f compose.delivery.yaml logs --tail 80 backend-api backend-outbox backend-consumer backend-pending-reference
+docker compose -f $baseCompose -f compose.delivery.yaml up -d --scale backend-consumer=3
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Para encerrar **sem remover volumes**:
 
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-This project is already instrumented. To connect it, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
-
-```bash
-$ npx @nestjs/observe link
+```powershell
+docker compose -f $baseCompose -f compose.delivery.yaml down
 ```
 
-It writes the app key and secret into `.env` and makes every `nest start` script (`start`, `start:dev`, `start:debug`) load it. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
+**Não execute `docker compose down -v`** a menos que queira apagar os volumes do ambiente de teste.
 
-Or do it by hand: create an application and an API key at [observe.nestjs.com](https://observe.nestjs.com), and set the pair as `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment the app runs in.
+## Desenvolvimento fora dos containers
 
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
+```powershell
+bun install
+docker compose up -d postgres localstack
+$env:MIKRO_ORM_ALLOW_GLOBAL_CLI = 'true'
+bunx mikro-orm migration:up --config ./src/mikro-orm.config.ts
+bun scripts/setup-sqs.ts
+bun scripts/setup-wager-queues.ts
+```
 
-## Resources
+Inicie os processos em terminais separados:
 
-Check out a few resources that may come in handy when working with NestJS:
+```powershell
+bun src/main.ts
+bun scripts/run-wager-consumer.ts
+bun scripts/run-outbox-publisher.ts
+bun scripts/run-pending-reference-worker.ts
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Se os nomes dos scripts de bootstrap locais diferirem, o caminho recomendado é o Compose completo, que utiliza `scripts/bootstrap-delivery-queues.ts`.
 
-## Support
+## API HTTP
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+| Método | Rota | Resultado |
+| --- | --- | --- |
+| `POST` | `/wallets` | Abre carteira; saldo inicial positivo gera `OPENING` e ledger |
+| `GET` | `/wallets/:walletId` | Saldo, moeda e versão |
+| `GET` | `/wallets/:walletId/ledger?limit=50&cursor=...` | Ledger ordenado, paginação por cursor |
+| `POST` | `/wagering/transactions` | BET/WIN/LOSS/REFUND/ROLLBACK; header `Idempotency-Key` obrigatório |
+| `GET` | `/wagering/transactions/:transactionId` | Consulta por UUID interno |
+| `GET` | `/providers/:providerId/wagering/transactions/:externalTransactionId` | Consulta pela identidade do provedor |
+| `POST` | `/wallets/:walletId/reconciliation` | Compara saldo armazenado e calculado a partir do ledger |
+| `GET` | `/health/live` | Liveness, não verifica dependências |
+| `GET` | `/health/ready` | PostgreSQL + filas SQS |
+| `GET` | `/metrics` | Métricas no formato Prometheus |
 
-## Stay in touch
+### Criar carteira (PowerShell)
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```powershell
+$baseUrl = 'http://127.0.0.1:3000'
+$playerId = [guid]::NewGuid().ToString()
 
-## License
+$wallet = Invoke-RestMethod -Uri "$baseUrl/wallets" -Method Post `
+  -ContentType 'application/json' `
+  -Body (@{
+    playerId = $playerId
+    initialBalance = @{ amount = '100.00'; currency = 'BRL' }
+  } | ConvertTo-Json -Depth 5)
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+$walletId = $wallet.id
+$wallet | ConvertTo-Json -Depth 5
+```
+
+### Submeter uma BET (PowerShell)
+
+```powershell
+$providerId = 'provider-demo'
+$externalId = [guid]::NewGuid().ToString()
+$key = "${providerId}:${externalId}"
+
+$bet = Invoke-RestMethod -Uri "$baseUrl/wagering/transactions" -Method Post `
+  -Headers @{ 'Idempotency-Key' = $key } `
+  -ContentType 'application/json' `
+  -Body (@{
+    providerId = $providerId
+    externalTransactionId = $externalId
+    playerId = $playerId
+    walletId = $walletId
+    roundId = 'round-001'
+    gameId = 'game-demo'
+    kind = 'BET'
+    money = @{ amount = '25.00'; currency = 'BRL' }
+  } | ConvertTo-Json -Depth 5)
+
+$bet | ConvertTo-Json -Depth 5
+```
+
+Resultado esperado para a primeira BET: `status: PROCESSED`, saldo `75.00 BRL`, `idempotentReplay: false`. Repetir a mesma requisição/chave não causa segundo débito e retorna replay. **A mesma chave com payload financeiro diferente deve ser conflito**, nunca um segundo processamento.
+
+### Consultar ledger e reconciliar
+
+```powershell
+Invoke-RestMethod "$baseUrl/wallets/$walletId/ledger?limit=50" | ConvertTo-Json -Depth 7
+Invoke-RestMethod -Uri "$baseUrl/wallets/$walletId/reconciliation" -Method Post | ConvertTo-Json -Depth 5
+```
+
+Status HTTP de referência: `200` para processada/replay e consultas, `202` para `PENDING_REFERENCE`, `422` para rejeição financeira, `400` para payload inválido, `404` para recurso inexistente; conflitos de idempotência são distintos das rejeições de negócio. `POST /wallets` retorna `201` quando cria uma carteira.
+
+## SQS e eventos
+
+Filas FIFO:
+
+- `wager-transactions.fifo`: comandos de apostas; `MessageGroupId = walletId`.
+- `wager-transactions-dlq.fifo`: mensagens inválidas ou não processáveis após o limite de entregas; `maxReceiveCount = 5` na configuração de demonstração.
+- `wager-events.fifo`: eventos confirmados da Outbox.
+
+Envelope de entrada:
+
+```json
+{
+  "messageId": "msg-123",
+  "type": "WagerTransactionRequested",
+  "occurredAt": "2026-10-23T00:00:00.000Z",
+  "data": {
+    "providerId": "provider-demo",
+    "externalTransactionId": "bet-123",
+    "idempotencyKey": "provider-demo:bet-123",
+    "playerId": "UUID-DO-JOGADOR",
+    "walletId": "UUID-DA-WALLET",
+    "roundId": "round-001",
+    "gameId": "game-demo",
+    "kind": "BET",
+    "money": { "amount": "25.00", "currency": "BRL" }
+  }
+}
+```
+
+O Consumer confirma `DeleteMessage` apenas após o caso de uso retornar com o commit do banco. `REJECTED` e `PENDING_REFERENCE` persistidos são resultados de negócio confirmados, portanto podem receber ACK. Erros transitórios permitem redelivery. O broker não é fonte de verdade da idempotência.
+
+Eventos de integração: `WagerTransactionProcessed`, `WagerTransactionRejected`, `WagerTransactionPendingReference` e `WalletBalanceChanged` (este apenas quando o saldo muda).
+
+## Testes
+
+**Preparação:** PostgreSQL e LocalStack precisam estar disponíveis. Suítes de integração criam recursos temporários ou exigem bancos de testes dedicados. **Não use o banco de desenvolvimento** nas suítes destrutivas ou que injetam falhas.
+
+```powershell
+bunx tsc --noEmit
+bun test src/domain
+bun test src/application
+```
+
+### Integração SQS e reconciliação
+
+```powershell
+$env:DATABASE_URL = 'postgresql://backend:backend@127.0.0.1:5432/backend_challenge_test'
+bun test tests/integration/sqs-consumer.integration.test.ts
+bun test tests/integration/reconciliation.integration.test.ts
+```
+
+### Concorrência HTTP (3 instâncias reais)
+
+```powershell
+$env:DATABASE_URL = 'postgresql://backend:backend@127.0.0.1:5432/backend_challenge_test'
+.\scripts\run-concurrency-tests.ps1
+```
+
+Verifica 50 BETs idênticas, duas BETs de `80.00` disputando `100.00` e wallets independentes em paralelo.
+
+### Workers, falhas e recuperação
+
+```powershell
+$env:DATABASE_URL = 'postgresql://backend:backend@127.0.0.1:5432/backend_challenge_workers_test'
+bun test tests/integration/parallel-outbox.integration.test.ts
+bun test tests/integration/sqs-workers-recovery.integration.test.ts
+bun test tests/integration/pending-reference-recovery.integration.test.ts
+bun test tests/integration/financial-atomicity.integration.test.ts
+```
+
+As suítes são executadas **individualmente** para evitar disputa por recursos temporários. Elas cobrem dois publishers, três consumidores, crash entre commit/ACK, reentrega, referências fora de ordem, rollback de falha no ledger/Outbox e rejeição após o limite de retries.
+
+### Auditoria das migrations (banco criado automaticamente)
+
+```powershell
+$env:DATABASE_URL = 'postgresql://backend:backend@127.0.0.1:5432/backend_challenge'
+.\scripts\run-schema-audit.ps1
+```
+
+O script cria um banco descartável, executa `migration:up`, sete testes de constraints, `migration:down --to 0`, novo `migration:up` e os sete testes novamente. **Resultado validado durante o desenvolvimento: 14 verificações aprovadas.** Não execute `migration:down` no banco principal.
+
+## Observabilidade
+
+- `GET /health/live`: verifica o processo.
+- `GET /health/ready`: verifica PostgreSQL, fila de entrada, fila de eventos e DLQ; responde `503` se alguma estiver indisponível.
+- `GET /metrics`: métricas de operações por status, replays, retries, conflitos de versão, latência, reconciliação, atraso na Outbox e quantidade aproximada na DLQ.
+- Logs JSON incluem IDs de correlação/transação/wallet/provedor nos pontos instrumentados, sem payload financeiro completo.
+
+As métricas de contadores são locais a cada processo. O `/metrics` da API não agrega automaticamente contadores dos workers externos. Consulte as limitações em [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## Solução de problemas
+
+| Sintoma | Verificação |
+| --- | --- |
+| `Cannot GET /health/live` | `HealthModule` importado em `AppModule`; API atual na porta 3000 |
+| `/health/ready` retorna `503` | PostgreSQL, LocalStack, filas e URLs configuradas |
+| `The specified queue does not exist` | Filas criadas, região, conta, `SQS_*_QUEUE_URL` e hostname correto |
+| `INTEGRATION_TEST_REQUIRES_TEST_DATABASE` | Ajustar `DATABASE_URL` **somente no terminal de testes** |
+| `migration:down` falha | Revisar `down()` da migration indicada; auditar exclusivamente em banco descartável |
+| Eventos pendentes na Outbox | Publisher ativo, SQS alcançável, política de retry e logs |
+| REFUND em `PENDING_REFERENCE` | `pending_reference_attempts`, `next_reference_attempt_at`, worker de referência |
+
+## Documentação complementar
+
+Consulte [ARCHITECTURE.md](./ARCHITECTURE.md) para invariantes de domínio, estratégia de locks e idempotência, diagramas de fluxo, tratamento de falhas, decisões de autenticação e trade-offs.

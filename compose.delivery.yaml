@@ -1,0 +1,107 @@
+# Complemento para seu Compose EXISTENTE, que ja define postgres e localstack.
+# Execute: docker compose -f <compose-original> -f compose.delivery.yaml up -d --build
+
+x-backend-environment: &backend-environment
+  DATABASE_URL: "postgresql://${POSTGRES_USER:-backend}:${POSTGRES_PASSWORD:-backend}@postgres:5432/${POSTGRES_DB:-backend_challenge}"
+  SQS_ENDPOINT: "http://localstack:4566"
+  SQS_REGION: "us-east-1"
+  AWS_ACCESS_KEY_ID: "test"
+  AWS_SECRET_ACCESS_KEY: "test"
+  SQS_EVENTS_QUEUE_URL: "http://localstack:4566/queue/us-east-1/000000000000/wager-events.fifo"
+  SQS_WAGER_QUEUE_URL: "http://localstack:4566/queue/us-east-1/000000000000/wager-transactions.fifo"
+  SQS_WAGER_DLQ_URL: "http://localstack:4566/queue/us-east-1/000000000000/wager-transactions-dlq.fifo"
+  SQS_WAGER_VISIBILITY_SECONDS: "120"
+  SQS_WAGER_WAIT_SECONDS: "10"
+  MIKRO_ORM_ALLOW_GLOBAL_CLI: "true"
+  NODE_ENV: "production"
+
+x-backend-common: &backend-common
+  build:
+    context: .
+    dockerfile: Dockerfile.delivery
+  env_file:
+    - .env
+  environment: *backend-environment
+  init: true
+
+services:
+  # Preservam-se as imagens, portas e volumes do Compose original.
+  postgres:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-backend} -d $${POSTGRES_DB:-backend_challenge}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  localstack:
+    environment:
+      SQS_ENDPOINT_STRATEGY: path
+      LOCALSTACK_HOST: "localstack:4566"
+
+  backend-migrate:
+    <<: *backend-common
+    command: ["bunx", "mikro-orm", "migration:up", "--config", "./src/mikro-orm.config.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend-queues:
+    <<: *backend-common
+    command: ["bun", "scripts/bootstrap-delivery-queues.ts"]
+    depends_on:
+      localstack:
+        condition: service_started
+    restart: "no"
+
+  backend-api:
+    <<: *backend-common
+    environment:
+      <<: *backend-environment
+      HOST: "0.0.0.0"
+      PORT: "3000"
+    command: ["bun", "src/main.ts"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
+      backend-queues:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r=await fetch('http://127.0.0.1:3000/health/ready'); process.exit(r.ok?0:1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  backend-outbox:
+    <<: *backend-common
+    command: ["bun", "scripts/run-outbox-publisher.ts"]
+    depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
+      backend-queues:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  backend-consumer:
+    <<: *backend-common
+    command: ["bun", "scripts/run-wager-consumer.ts"]
+    depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
+      backend-queues:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  backend-pending-reference:
+    <<: *backend-common
+    command: ["bun", "scripts/run-pending-reference-worker.ts"]
+    depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
+      backend-queues:
+        condition: service_completed_successfully
+    restart: unless-stopped

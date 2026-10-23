@@ -30,20 +30,122 @@ export class Migration20261022150202 extends Migration {
   }
 
   override down(): void | Promise<void> {
-    this.addSql(`alter table "outbox_messages" drop column "claim_token", drop column "lease_until";`);
+    // 1. Remover colunas adicionadas pela migration.
+    this.addSql(`
+      ALTER TABLE "outbox_messages"
+      DROP COLUMN "claim_token",
+      DROP COLUMN "lease_until";
+    `);
 
-    this.addSql(`alter table "wager_transactions" drop constraint "wager_status_valid";`);
-    this.addSql(`alter table "wager_transactions" drop constraint "wager_kind_valid";`);
-    this.addSql(`alter table "wager_transactions" add constraint "wager_reference_fk" foreign key ("reference_transaction_id") references "wager_transactions" ("id") on delete restrict;`);
-    this.addSql(`alter table "wager_transactions" add constraint "wager_wallet_fk" foreign key ("wallet_id") references "wallets" ("id") on delete restrict;`);
-    this.addSql(`create unique index "wager_processed_reversal_unique" on "wager_transactions" ("reference_transaction_id", "kind") where ((status)::text = 'PROCESSED'::text) AND ((kind)::text = ANY ((ARRAY['REFUND'::character varying, 'ROLLBACK'::character varying])::text[]));`);
-    this.addSql(`alter table "wager_transactions" add constraint "wager_status_valid" check ("status" in ('PENDING', 'PENDING_REFERENCE', 'PROCESSED', 'REJECTED', 'FAILED'));`);
-    this.addSql(`alter table "wager_transactions" add constraint "wager_kind_valid" check ("kind" in ('OPENING', 'BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK'));`);
+    // 2. Remover constraints atuais.
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      DROP CONSTRAINT "wager_status_valid";
+    `);
 
-    this.addSql(`alter table "wallet_ledger_entries" add constraint "ledger_transaction_fk" foreign key ("transaction_id") references "wager_transactions" ("id") on delete restrict;`);
-    this.addSql(`alter table "wallet_ledger_entries" add constraint "ledger_wallet_fk" foreign key ("wallet_id") references "wallets" ("id") on delete restrict;`);
-    this.addSql(`create or replace function "wallet_ledger_entries_ledger_block_update_delete_fn"() returns trigger as \$\$ begin ; end; \$\$ language plpgsql;`);
-    this.addSql(`create trigger "ledger_block_update_delete" BEFORE DELETE OR UPDATE on "wallet_ledger_entries" for each ROW execute function "wallet_ledger_entries_ledger_block_update_delete_fn"();`);
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      DROP CONSTRAINT "wager_kind_valid";
+    `);
+
+    // 3. Restaurar foreign keys.
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      ADD CONSTRAINT "wager_reference_fk"
+      FOREIGN KEY ("reference_transaction_id")
+      REFERENCES "wager_transactions" ("id")
+      ON DELETE RESTRICT;
+    `);
+
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      ADD CONSTRAINT "wager_wallet_fk"
+      FOREIGN KEY ("wallet_id")
+      REFERENCES "wallets" ("id")
+      ON DELETE RESTRICT;
+    `);
+
+    // 4. Restaurar índice parcial das reversões.
+    this.addSql(`
+      CREATE UNIQUE INDEX "wager_processed_reversal_unique"
+      ON "wager_transactions" (
+        "reference_transaction_id",
+        "kind"
+      )
+      WHERE
+        status = 'PROCESSED'
+        AND kind IN ('REFUND', 'ROLLBACK');
+    `);
+
+    // 5. Restaurar constraints de domínio.
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      ADD CONSTRAINT "wager_status_valid"
+      CHECK (
+        status IN (
+          'PENDING',
+          'PENDING_REFERENCE',
+          'PROCESSED',
+          'REJECTED',
+          'FAILED'
+        )
+      );
+    `);
+
+    this.addSql(`
+      ALTER TABLE "wager_transactions"
+      ADD CONSTRAINT "wager_kind_valid"
+      CHECK (
+        kind IN (
+          'OPENING',
+          'BET',
+          'WIN',
+          'LOSS',
+          'REFUND',
+          'ROLLBACK'
+        )
+      );
+    `);
+
+    // 6. Restaurar foreign keys do ledger.
+    this.addSql(`
+      ALTER TABLE "wallet_ledger_entries"
+      ADD CONSTRAINT "ledger_transaction_fk"
+      FOREIGN KEY ("transaction_id")
+      REFERENCES "wager_transactions" ("id")
+      ON DELETE RESTRICT;
+    `);
+
+    this.addSql(`
+      ALTER TABLE "wallet_ledger_entries"
+      ADD CONSTRAINT "ledger_wallet_fk"
+      FOREIGN KEY ("wallet_id")
+      REFERENCES "wallets" ("id")
+      ON DELETE RESTRICT;
+    `);
+
+    // 7. Restaurar função que bloqueia alterações.
+    this.addSql(`
+      CREATE OR REPLACE FUNCTION
+        "wallet_ledger_entries_ledger_block_update_delete_fn"()
+      RETURNS TRIGGER
+      LANGUAGE plpgsql
+      AS $$
+      BEGIN
+        RAISE EXCEPTION 'LEDGER_IMMUTABLE';
+      END;
+      $$;
+    `);
+
+    // 8. Restaurar trigger de UPDATE e DELETE.
+    this.addSql(`
+      CREATE TRIGGER "ledger_block_update_delete"
+      BEFORE UPDATE OR DELETE
+      ON "wallet_ledger_entries"
+      FOR EACH ROW
+      EXECUTE FUNCTION
+        "wallet_ledger_entries_ledger_block_update_delete_fn"();
+    `);
   }
 
 }
